@@ -1,23 +1,24 @@
 {
   "name": "nakiri-electricity",
-  "zone_id": "你的站点ZoneID",
   "type": "pages",
   "pages": {
     "directory": "dist",
-    "main": "functions/worker.js",
+    "main": "functions/api/[[path]].js", 
     "compatibility_date": "2024-04-05"
   },
-  "env_vars": {
-    "ROOM_ID": "507",
-    "PART_ID": "徐汇",
-    "BUILD_ID": "18"
-  },
+  
   "kv_namespaces": [
     {
       "binding": "ELECTRIC_KV",
       "id": "ns-IvHuwmEJH2cS"
     }
   ],
+
+  "env_vars": {
+    "ROOM_ID": "507",
+    "PART_ID": "徐汇",
+    "BUILD_ID": "18"
+  },
   "triggers": {
     "crons": [
       "0 * * * *" 
