@@ -127,6 +127,27 @@ function renderHtml(result) {
 async function handleRequest(request, env) {
     const url = new URL(request.url);
     
+    // --- 插入这段调试代码 (开始) ---
+    // 访问 /api/debug 可以看到当前环境里到底有什么
+    if (url.pathname.endsWith('/debug')) {
+        const envKeys = Object.keys(env);
+        const kvStatus = {
+            exists: !!env.ELECTRIC_KV,
+            type: env.ELECTRIC_KV ? typeof env.ELECTRIC_KV : 'undefined',
+            isNamespace: env.ELECTRIC_KV && typeof env.ELECTRIC_KV.get === 'function',
+            // 如果它被错配成了环境变量，打印它的值看看（只取前几个字符防止泄露）
+            valuePreview: (typeof env.ELECTRIC_KV === 'string') ? env.ELECTRIC_KV.substring(0, 5) + '...' : 'N/A'
+        };
+
+        return new Response(JSON.stringify({
+            message: "Environment Debug Info",
+            available_env_keys: envKeys, // 这里会列出所有能读到的变量名
+            electric_kv_status: kvStatus,
+            all_env_preview: env // 注意：这会打印所有变量，不要在生产环境长期保留
+        }, null, 2), { headers: { "Content-Type": "application/json" } });
+    }
+    // --- 插入这段调试代码 (结束) ---
+
     // 调试模式：如果 env 没传进来，这里会报错
     if (!env) return new Response("Fatal: Environment Variables missing in Handler", { status: 500 });
 
