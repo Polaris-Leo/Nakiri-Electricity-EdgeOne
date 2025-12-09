@@ -1,14 +1,13 @@
 /**
- * Tencent Cloud EdgeOne Worker
- * 适配：KV 存储替代 D1 SQL
+ * Nakiri Electricity Monitor - EdgeOne Pages Version
+ * 文件路径建议: functions/api/[[path]].js
  */
 
-// --- 常量配置 ---
+// --- 1. 配置与常量 ---
 const BASE_URL = "https://yktyd.ecust.edu.cn/epay/wxpage/wanxiao/eleresult";
 const USER_AGENT = "Mozilla/5.0 (Linux; U; Android 4.1.2; zh-cn; Chitanda/Akari) AppleWebKit/534.30 (KHTML, like Gecko) Version/4.0 Mobile Safari/534.30 MicroMessenger/6.0.0.58_r884092.501 NetType/WIFI";
 const REGEX = /(-?\d+(\.\d+)?)度/;
 
-// 楼栋映射 (保持不变)
 const BUILDING_MAP = {
     "奉贤1号楼":"1", "奉贤2号楼":"2", "奉贤3号楼":"3", "奉贤4号楼":"4",
     "奉贤5号楼":"27", "奉贤6号楼":"28", "奉贤7号楼":"29", "奉贤8号楼":"30",
@@ -37,7 +36,8 @@ const SPECIAL_NAMES = {
     "南区3": "南区第三宿舍楼", "南区4A": "南区4A宿舍楼", "南区4B": "南区4B宿舍楼"
 };
 
-// --- 辅助函数 ---
+// --- 2. 核心逻辑函数 ---
+
 function autoGenerateUrl(env) {
     const roomId = env.ROOM_ID;
     let partId = env.PART_ID; 
@@ -54,12 +54,10 @@ function autoGenerateUrl(env) {
     return `${BASE_URL}?sysid=1&roomid=${roomId}&areaid=${areaId}&buildid=${matchedBuildId}`;
 }
 
-/**
- * 核心逻辑修改：使用 KV 存取数据
- * 数据结构: Key = `history_${roomId}`, Value = JSON Array of { timestamp, kWh, room_id }
- */
 async function getHistoryFromKV(env, roomId) {
     try {
+        // 【注意】这里必须确保 env.ELECTRIC_KV 存在，否则会报错
+        if (!env.ELECTRIC_KV) return [];
         const raw = await env.ELECTRIC_KV.get(`history_${roomId}`);
         return raw ? JSON.parse(raw) : [];
     } catch (e) {
@@ -70,19 +68,13 @@ async function getHistoryFromKV(env, roomId) {
 
 async function saveHistoryToKV(env, roomId, newDataPoint) {
     try {
+        if (!env.ELECTRIC_KV) return;
         let history = await getHistoryFromKV(env, roomId);
-        
-        // 去重：检查最后一条是否相同时间，如果很近则不存（可选）
         const exists = history.some(h => h.timestamp === newDataPoint.timestamp);
         if (!exists) {
             history.push(newDataPoint);
-            
-            // 数据保留策略：保留最近 30 天的数据 (假设每小时一条，约 720 条)
-            // 为了安全起见保留最近 1000 条
-            if (history.length > 1000) {
-                history = history.slice(-1000);
-            }
-            
+            // 保留最近 1000 条
+            if (history.length > 1000) history = history.slice(-1000);
             await env.ELECTRIC_KV.put(`history_${roomId}`, JSON.stringify(history));
         }
     } catch (e) {
@@ -92,40 +84,30 @@ async function saveHistoryToKV(env, roomId, newDataPoint) {
 
 async function scrape(env) {
     const roomId = env.ROOM_ID;
-    if (!roomId) return { error: "ROOM_ID not set" };
-    
-    // 如果没有 ELECTRIC_KV 绑定，报错
-    if (!env.ELECTRIC_KV) return { error: "KV binding missing" };
+    if (!roomId) return { error: "ROOM_ID not set (Check Environment Variables)" };
+    if (!env.ELECTRIC_KV) return { error: "KV Binding 'ELECTRIC_KV' missing" };
 
     let url = env.ROOM_URL || autoGenerateUrl(env);
     if (!url) url = `${BASE_URL}?sysid=1&areaid=3&buildid=20&roomid=${roomId}`;
 
     try {
         const response = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
-        if (!response.ok) return { error: `HTTP ${response.status}` };
+        if (!response.ok) return { error: `Remote Server Error: HTTP ${response.status}` };
         const text = await response.text();
         const match = text.match(REGEX);
         
         if (match && match[1]) {
             const kwh = parseFloat(match[1]);
             const timestamp = new Date().toISOString();
-            
-            // 写入 KV
-            await saveHistoryToKV(env, roomId, {
-                timestamp,
-                room_id: roomId,
-                kWh: kwh
-            });
-            
+            await saveHistoryToKV(env, roomId, { timestamp, room_id: roomId, kWh: kwh });
             return { success: true, kwh };
         }
-        return { error: "Parse failed" };
+        return { error: "Parse failed: Could not find electricity data in page" };
     } catch (e) {
         return { error: e.message };
     }
 }
 
-// HTML 渲染函数 (保持不变，省略以节省空间，直接复制 Cloudflare 版本即可)
 function renderHtml(result) {
     const isSuccess = result.success;
     const title = isSuccess ? "更新成功" : "更新失败";
@@ -135,26 +117,21 @@ function renderHtml(result) {
         : `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>`;
 
     const content = isSuccess
-        ? `<div class="py-6">
-             <div class="text-sm text-zinc-400 mb-2">当前剩余电量</div>
-             <div class="text-6xl font-mono font-bold tracking-tight text-white">${result.kwh} <span class="text-2xl text-zinc-500">kWh</span></div>
-             <div class="mt-4 text-xs text-zinc-500 font-mono">已同步至数据库(KV)</div>
-           </div>`
-        : `<div class="bg-red-950/30 border border-red-900/50 rounded-lg p-4 text-left my-4">
-             <div class="text-xs text-red-400 mb-1 font-semibold">ERROR DETAILS:</div>
-             <code class="text-xs text-red-200 break-all font-mono">${result.error || 'Unknown Error'}</code>
-           </div>`;
+        ? `<div class="py-6"><div class="text-sm text-zinc-400 mb-2">当前剩余电量</div><div class="text-6xl font-mono font-bold tracking-tight text-white">${result.kwh} <span class="text-2xl text-zinc-500">kWh</span></div><div class="mt-4 text-xs text-zinc-500 font-mono">已同步至数据库(KV)</div></div>`
+        : `<div class="bg-red-950/30 border border-red-900/50 rounded-lg p-4 text-left my-4"><div class="text-xs text-red-400 mb-1 font-semibold">ERROR DETAILS:</div><code class="text-xs text-red-200 break-all font-mono">${result.error || 'Unknown Error'}</code></div>`;
 
-    return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Nakiri - ${title}</title><script src="https://cdn.tailwindcss.com"></script><style>body{font-family:system-ui,-apple-system,sans-serif}</style></head><body class="bg-black text-zinc-100 min-h-screen flex items-center justify-center p-4"><div class="max-w-sm w-full bg-zinc-900 border border-zinc-800 rounded-3xl shadow-2xl p-8 text-center animate-[fade-in_0.5s_ease-out]"><div class="w-20 h-20 ${colorClass} rounded-full flex items-center justify-center mx-auto mb-6">${icon}</div><h1 class="text-2xl font-bold text-white mb-2">${title}</h1>${content}<div class="pt-6 border-t border-zinc-800 mt-2"><a href="/" class="group inline-flex items-center justify-center w-full py-3 px-4 bg-white text-black font-bold rounded-xl hover:bg-zinc-200 transition-all active:scale-95"><span>返回仪表盘</span><svg class="ml-2 w-4 h-4 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg></a></div></div></body></html>`;
+    return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>${title}</title><script src="https://cdn.tailwindcss.com"></script></head><body class="bg-black text-zinc-100 min-h-screen flex items-center justify-center p-4"><div class="max-w-sm w-full bg-zinc-900 border border-zinc-800 rounded-3xl shadow-2xl p-8 text-center"><div class="w-20 h-20 ${colorClass} rounded-full flex items-center justify-center mx-auto mb-6">${icon}</div><h1 class="text-2xl font-bold text-white mb-2">${title}</h1>${content}<div class="pt-6 border-t border-zinc-800 mt-2"><a href="/" class="group inline-flex items-center justify-center w-full py-3 px-4 bg-white text-black font-bold rounded-xl hover:bg-zinc-200 transition-all active:scale-95">返回仪表盘</a></div></div></body></html>`;
 }
 
-// --- 事件监听 (EdgeOne 写法) ---
-
-async function handleRequest(request, env, ctx) {
+// --- 3. 业务逻辑路由器 (Common Logic) ---
+async function handleRequest(request, env) {
     const url = new URL(request.url);
+    
+    // 调试模式：如果 env 没传进来，这里会报错
+    if (!env) return new Response("Fatal: Environment Variables missing in Handler", { status: 500 });
 
-    // 1. GET /api/config
-    if (url.pathname === '/api/config') {
+    // 路由 1: /api/config
+    if (url.pathname.endsWith('/config')) {
         const roomId = env.ROOM_ID || 'Unset';
         const buildId = env.BUILD_ID;
         const partId = env.PART_ID;
@@ -164,27 +141,24 @@ async function handleRequest(request, env, ctx) {
             let buildDisplay = /^\d+$/.test(buildId) ? `${buildId}号楼` : buildId;
             displayName = `${campus}-${buildDisplay}-${roomId}`;
         }
-        return new Response(JSON.stringify({ roomId, displayName, version: 'EdgeOne-KV-v1.0' }), { headers: { "Content-Type": "application/json" } });
+        return new Response(JSON.stringify({ roomId, displayName, version: 'EdgeOne-Pages-v2' }), { headers: { "Content-Type": "application/json" } });
     }
 
-    // 2. GET /api/data
-    if (url.pathname === '/api/data') {
-        if (!env.ELECTRIC_KV) return new Response(JSON.stringify({ error: "KV binding missing" }), { status: 500 });
-        
+    // 路由 2: /api/data
+    if (url.pathname.endsWith('/data')) {
         const roomId = env.ROOM_ID;
-        // 从 KV 读取所有历史数据
         let results = await getHistoryFromKV(env, roomId);
         
-        // 前端通过 JS 进行 30 天过滤，这里也可以做一层简单的过滤减少传输量
+        // 简单过滤最近32天
         const cutoff = new Date();
-        cutoff.setDate(cutoff.getDate() - 32); // 多给一点冗余
+        cutoff.setDate(cutoff.getDate() - 32); 
         results = results.filter(item => new Date(item.timestamp) > cutoff);
         
         return new Response(JSON.stringify(results), { headers: { "Content-Type": "application/json" } });
     }
 
-    // 3. GET /api/scrape
-    if (url.pathname === '/api/scrape') {
+    // 路由 3: /api/scrape
+    if (url.pathname.endsWith('/scrape')) {
         const result = await scrape(env);
         const accept = request.headers.get("Accept");
         if (accept && accept.includes("application/json")) {
@@ -193,19 +167,11 @@ async function handleRequest(request, env, ctx) {
         return new Response(renderHtml(result), { headers: { "Content-Type": "text/html; charset=utf-8" } });
     }
 
-    // 4. 静态资源托管交给 EdgeOne Pages 自动处理
-    // 注意：EdgeOne Functions 通常只拦截 /api 或者是被配置的路由。
-    // 如果此脚本作为“全站接管”脚本，需要处理静态资源回源。
-    // 假设配置为 functions 目录模式，非 functions 请求会自动回源到静态资源，此处只需返回 404 或 fetch upstream
-    return fetch(request);
+    return new Response("Not Found", { status: 404 });
 }
 
-// EdgeOne 导出语法
-export default {
-  async fetch(request, env, ctx) {
-    return handleRequest(request, env, ctx);
-  },
-  async scheduled(event, env, ctx) {
-    ctx.waitUntil(scrape(env));
-  },
-};
+// --- 4. 适配器：Pages Functions 入口 ---
+// 这就是你刚才发的示例中的写法，我们在这里调用上面的逻辑
+export async function onRequest({ request, env }) {
+    return handleRequest(request, env);
+}
