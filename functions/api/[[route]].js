@@ -1,9 +1,10 @@
 /**
- * Nakiri Electricity Monitor - EdgeOne Pages Version
- * 文件路径建议: functions/api/[[path]].js
+ * Nakiri Electricity Monitor
+ * 对应文件: functions/api/[[route]].js
+ * 采用官方 Pages Functions 语法
  */
 
-// --- 1. 配置与常量 ---
+// --- 1. 常量配置 ---
 const BASE_URL = "https://yktyd.ecust.edu.cn/epay/wxpage/wanxiao/eleresult";
 const USER_AGENT = "Mozilla/5.0 (Linux; U; Android 4.1.2; zh-cn; Chitanda/Akari) AppleWebKit/534.30 (KHTML, like Gecko) Version/4.0 Mobile Safari/534.30 MicroMessenger/6.0.0.58_r884092.501 NetType/WIFI";
 const REGEX = /(-?\d+(\.\d+)?)度/;
@@ -36,7 +37,7 @@ const SPECIAL_NAMES = {
     "南区3": "南区第三宿舍楼", "南区4A": "南区4A宿舍楼", "南区4B": "南区4B宿舍楼"
 };
 
-// --- 2. 核心逻辑函数 ---
+// --- 2. 辅助函数 ---
 
 function autoGenerateUrl(env) {
     const roomId = env.ROOM_ID;
@@ -56,8 +57,8 @@ function autoGenerateUrl(env) {
 
 async function getHistoryFromKV(env, roomId) {
     try {
-        // 【注意】这里必须确保 env.ELECTRIC_KV 存在，否则会报错
-        if (!env.ELECTRIC_KV) return [];
+        // 这里的 env.ELECTRIC_KV 对应你在控制台绑定的变量名
+        if (!env.ELECTRIC_KV) return []; 
         const raw = await env.ELECTRIC_KV.get(`history_${roomId}`);
         return raw ? JSON.parse(raw) : [];
     } catch (e) {
@@ -84,7 +85,7 @@ async function saveHistoryToKV(env, roomId, newDataPoint) {
 
 async function scrape(env) {
     const roomId = env.ROOM_ID;
-    if (!roomId) return { error: "ROOM_ID not set (Check Environment Variables)" };
+    if (!roomId) return { error: "ROOM_ID not configured" };
     if (!env.ELECTRIC_KV) return { error: "KV Binding 'ELECTRIC_KV' missing" };
 
     let url = env.ROOM_URL || autoGenerateUrl(env);
@@ -92,7 +93,7 @@ async function scrape(env) {
 
     try {
         const response = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
-        if (!response.ok) return { error: `Remote Server Error: HTTP ${response.status}` };
+        if (!response.ok) return { error: `HTTP ${response.status}` };
         const text = await response.text();
         const match = text.match(REGEX);
         
@@ -102,7 +103,7 @@ async function scrape(env) {
             await saveHistoryToKV(env, roomId, { timestamp, room_id: roomId, kWh: kwh });
             return { success: true, kwh };
         }
-        return { error: "Parse failed: Could not find electricity data in page" };
+        return { error: "Parse failed" };
     } catch (e) {
         return { error: e.message };
     }
@@ -111,46 +112,18 @@ async function scrape(env) {
 function renderHtml(result) {
     const isSuccess = result.success;
     const title = isSuccess ? "更新成功" : "更新失败";
-    const colorClass = isSuccess ? "text-green-500 bg-green-500/10" : "text-red-500 bg-red-500/10";
-    const icon = isSuccess 
-        ? `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>`
-        : `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>`;
-
     const content = isSuccess
-        ? `<div class="py-6"><div class="text-sm text-zinc-400 mb-2">当前剩余电量</div><div class="text-6xl font-mono font-bold tracking-tight text-white">${result.kwh} <span class="text-2xl text-zinc-500">kWh</span></div><div class="mt-4 text-xs text-zinc-500 font-mono">已同步至数据库(KV)</div></div>`
-        : `<div class="bg-red-950/30 border border-red-900/50 rounded-lg p-4 text-left my-4"><div class="text-xs text-red-400 mb-1 font-semibold">ERROR DETAILS:</div><code class="text-xs text-red-200 break-all font-mono">${result.error || 'Unknown Error'}</code></div>`;
-
-    return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>${title}</title><script src="https://cdn.tailwindcss.com"></script></head><body class="bg-black text-zinc-100 min-h-screen flex items-center justify-center p-4"><div class="max-w-sm w-full bg-zinc-900 border border-zinc-800 rounded-3xl shadow-2xl p-8 text-center"><div class="w-20 h-20 ${colorClass} rounded-full flex items-center justify-center mx-auto mb-6">${icon}</div><h1 class="text-2xl font-bold text-white mb-2">${title}</h1>${content}<div class="pt-6 border-t border-zinc-800 mt-2"><a href="/" class="group inline-flex items-center justify-center w-full py-3 px-4 bg-white text-black font-bold rounded-xl hover:bg-zinc-200 transition-all active:scale-95">返回仪表盘</a></div></div></body></html>`;
+        ? `<div class="py-6"><div class="text-sm text-zinc-400 mb-2">当前剩余电量</div><div class="text-6xl font-mono font-bold tracking-tight text-white">${result.kwh} <span class="text-2xl text-zinc-500">kWh</span></div></div>`
+        : `<div class="bg-red-950/30 p-4 text-left my-4"><code class="text-xs text-red-200">${result.error || 'Unknown Error'}</code></div>`;
+    
+    return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>${title}</title><script src="https://cdn.tailwindcss.com"></script></head><body class="bg-black text-zinc-100 min-h-screen flex items-center justify-center p-4"><div class="max-w-sm w-full bg-zinc-900 border border-zinc-800 rounded-3xl p-8 text-center"><h1 class="text-2xl font-bold mb-2">${title}</h1>${content}<div class="pt-6 border-t border-zinc-800 mt-2"><a href="/" class="block w-full py-3 bg-white text-black font-bold rounded-xl">返回仪表盘</a></div></div></body></html>`;
 }
 
-// --- 3. 业务逻辑路由器 (Common Logic) ---
-async function handleRequest(request, env) {
+// --- 3. 官方入口: onRequest ---
+// 这里对应你给的官方示例写法
+export async function onRequest({ request, env, params }) {
     const url = new URL(request.url);
     
-    // --- 插入这段调试代码 (开始) ---
-    // 访问 /api/debug 可以看到当前环境里到底有什么
-    if (url.pathname.endsWith('/debug')) {
-        const envKeys = Object.keys(env);
-        const kvStatus = {
-            exists: !!env.ELECTRIC_KV,
-            type: env.ELECTRIC_KV ? typeof env.ELECTRIC_KV : 'undefined',
-            isNamespace: env.ELECTRIC_KV && typeof env.ELECTRIC_KV.get === 'function',
-            // 如果它被错配成了环境变量，打印它的值看看（只取前几个字符防止泄露）
-            valuePreview: (typeof env.ELECTRIC_KV === 'string') ? env.ELECTRIC_KV.substring(0, 5) + '...' : 'N/A'
-        };
-
-        return new Response(JSON.stringify({
-            message: "Environment Debug Info",
-            available_env_keys: envKeys, // 这里会列出所有能读到的变量名
-            electric_kv_status: kvStatus,
-            all_env_preview: env // 注意：这会打印所有变量，不要在生产环境长期保留
-        }, null, 2), { headers: { "Content-Type": "application/json" } });
-    }
-    // --- 插入这段调试代码 (结束) ---
-
-    // 调试模式：如果 env 没传进来，这里会报错
-    if (!env) return new Response("Fatal: Environment Variables missing in Handler", { status: 500 });
-
     // 路由 1: /api/config
     if (url.pathname.endsWith('/config')) {
         const roomId = env.ROOM_ID || 'Unset';
@@ -159,18 +132,17 @@ async function handleRequest(request, env) {
         let displayName = `Room ${roomId}`;
         if (buildId && partId) {
             let campus = (partId === '0' || partId === '奉贤') ? "奉贤" : ((partId === '1' || partId === '徐汇') ? "徐汇" : partId);
-            let buildDisplay = /^\d+$/.test(buildId) ? `${buildId}号楼` : buildId;
-            displayName = `${campus}-${buildDisplay}-${roomId}`;
+            displayName = `${campus}-${buildId}号楼-${roomId}`;
         }
-        return new Response(JSON.stringify({ roomId, displayName, version: 'EdgeOne-Pages-v2' }), { headers: { "Content-Type": "application/json" } });
+        return new Response(JSON.stringify({ roomId, displayName }), { headers: { "Content-Type": "application/json" } });
     }
 
     // 路由 2: /api/data
     if (url.pathname.endsWith('/data')) {
-        const roomId = env.ROOM_ID;
-        let results = await getHistoryFromKV(env, roomId);
+        // 关键点：使用 env.ELECTRIC_KV
+        if (!env.ELECTRIC_KV) return new Response(JSON.stringify({error: "KV Config Missing"}), {status: 500});
         
-        // 简单过滤最近32天
+        let results = await getHistoryFromKV(env, env.ROOM_ID);
         const cutoff = new Date();
         cutoff.setDate(cutoff.getDate() - 32); 
         results = results.filter(item => new Date(item.timestamp) > cutoff);
@@ -189,10 +161,4 @@ async function handleRequest(request, env) {
     }
 
     return new Response("Not Found", { status: 404 });
-}
-
-// --- 4. 适配器：Pages Functions 入口 ---
-// 这就是你刚才发的示例中的写法，我们在这里调用上面的逻辑
-export async function onRequest({ request, env }) {
-    return handleRequest(request, env);
 }
